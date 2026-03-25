@@ -1,0 +1,83 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd monolith
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run tests
+        run: |
+          cd monolith
+          python -c "
+          from app import app, db
+          with app.app_context():
+              db.create_all()
+              client = app.test_client()
+              # Test health
+              r = client.get('/health')
+              assert r.status_code == 200
+              # Test create task
+              r = client.post('/api/tasks', json={'title': 'Test task'})
+              assert r.status_code == 201
+              # Test get tasks
+              r = client.get('/api/tasks')
+              assert r.status_code == 200
+              assert len(r.json) >= 1
+              # Test update task
+              task_id = r.json[0]['id']
+              r = client.put(f'/api/tasks/{task_id}', json={'completed': True})
+              assert r.status_code == 200
+              # Test delete task
+              r = client.delete(f'/api/tasks/{task_id}')
+              assert r.status_code == 200
+              print('All tests passed!')
+          "
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          cd monolith
+          docker build -t todo-app:${{ github.sha }} .
+          docker build -t todo-app:latest .
+
+      - name: Verify image
+        run: |
+          docker images todo-app
+          echo "Build successful! Image ready for deployment."
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy notification
+        run: |
+          echo "🚀 Deployment triggered for commit ${{ github.sha }}"
+          echo "In production, this step would push to Railway/Render/Fly.io"
+          echo "Example: railway up --service todo-app"
